@@ -1,0 +1,10 @@
+# Metering only: attribute and cost every call, change nothing. This is the
+# configuration you start with -- you cannot govern spend you have not measured,
+# and a proxy that rewrites requests on day one will be blamed for the next
+# unrelated regression.
+
+budgets:
+  window: day
+  default: 100.00
+
+rules: []

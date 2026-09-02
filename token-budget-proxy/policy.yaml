@@ -1,0 +1,49 @@
+# Controls applied before a request is sent. Budgets are the backstop; rules are
+# where the savings actually come from.
+
+budgets:
+  window: day          # hour | day | week | month
+  default: 5.00        # USD per agent per window
+  agents:
+    doc-triage: 1.00
+    "subagent-*": 0.50
+
+rules:
+  # Classification does not need a frontier model. Route it by task, not by
+  # asking every caller to remember.
+  - name: cheap-classification
+    when:
+      task: classify
+    then:
+      model: claude-sonnet-5
+      effort: low
+
+  # Sub-agents fan out; depth there is multiplied by the fan-out factor.
+  - name: shallow-subagents
+    when:
+      agent: "subagent-*"
+    then:
+      effort: low
+
+  # A large prefix with no breakpoint is free money left on the table. Adding
+  # one is safe: it changes billing, not behaviour.
+  - name: cache-large-prefixes
+    when:
+      min_prefix_tokens: 1024
+    then:
+      ensure_cache_control: true
+
+  # A ceiling low enough to truncate is worse than no ceiling: the tokens are
+  # billed and the answer is unusable, so the work gets paid for twice.
+  - name: no-truncating-ceilings
+    when:
+      has_tools: false
+    then:
+      max_tokens_floor: 16000
+
+  # Nothing routine should reach the most expensive model by accident.
+  - name: fable-needs-a-reason
+    when:
+      model: claude-fable-5
+    then:
+      deny: true

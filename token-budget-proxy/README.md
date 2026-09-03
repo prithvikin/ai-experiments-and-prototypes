@@ -194,7 +194,53 @@ whenever the output changes instead of quietly going stale.
 - `dead-tools` apportions a call's tool-definition tokens evenly across the
   declared tools rather than measuring each definition, so its dollar figure is
   approximate. It is flagged medium, never high.
-- Costing assumes first-party API rates. Bedrock and Vertex are priced
-  separately and would need their own table.
-- Prompt prefixes are stored in full to make the byte-diff possible. That is
-  fine for local use and would need a retention policy anywhere else.
+- Pre-flight rule matching estimates tokens at characters ÷ 4 rather than
+  calling `count_tokens`, so a rule with a threshold near a boundary can match
+  the wrong way.
+
+## What this would need to be real
+
+Three gaps, in the order I would close them.
+
+**Validation against live traffic.** This is the one that matters, and it is a
+problem of correlated error rather than missing features: the analysers and the
+mock upstream share an author and therefore a mental model. If my understanding
+of when a prefix caches is wrong, the simulator is wrong in exactly the same
+direction, the tests pass, and the report is confidently incorrect. Nothing in
+this repo can detect that.
+
+The fix is not more tests, it is a different oracle. Run the proxy in shadow
+mode against real traffic and record, per call, the `usage` the analyser
+*predicted* alongside the `usage` the API actually returned. Prediction error
+then becomes a first-class metric with a dashboard of its own — and any finding
+whose model of the world disagrees with billing reality shows up as drift rather
+than as a plausible dollar figure nobody audits. The chars ÷ 4 estimate wants
+the same treatment, calibrated against `count_tokens` on sampled requests.
+
+**Multi-provider normalisation.** Everything here assumes first-party API
+shapes: one rate table, one set of model ids, one `usage` schema, one set of
+cache semantics. Bedrock, Vertex, and Foundry vary on all four — partner-operated
+pricing, prefixed or `@`-versioned model ids, and per-platform differences in
+which features exist at all. Supporting them properly means an adapter per
+provider that normalises the response into the internal `Call` shape, and a rate
+table keyed on `(provider, model)` rather than model alone.
+
+That is more interesting than a compatibility chore. Once spend is normalised
+across providers, the ledger can answer the question nobody can currently answer
+without a spreadsheet: for this specific workload, with its actual cache hit
+rate and prompt shape, which provider is cheapest? Cache economics move that
+answer around a lot, and a workload with a 90% hit rate prices very differently
+from the same workload with none.
+
+**A retention policy for stored prefixes.** The byte-diff works because full
+prompt prefixes are kept on disk. Those prefixes are the user's data — system
+prompts carry business logic, and anything interpolated into them carries
+whatever it carries. Fine on a laptop, unacceptable as a default anywhere else.
+
+The naive fixes (encrypt at rest, TTL the rows) do not really address it, because
+the tool still holds the plaintext. The better version keeps a per-content-block
+hash chain instead of the text: comparing two chains localises the divergence to
+a specific block — "the third system block changed" — which is most of the
+diagnostic value at none of the retention cost. Full text capture then becomes an
+explicit opt-in for the case where someone needs the exact bytes, scoped to one
+agent and one time window.
